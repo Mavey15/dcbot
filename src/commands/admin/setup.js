@@ -104,6 +104,21 @@ module.exports = {
         .addRoleOption((opt) => opt.setName('role').setDescription('Role yang otomatis diberikan')),
     )
     .addSubcommand((sub) =>
+      sub
+        .setName('mode')
+        .setDescription('Pilih mode bot khusus untuk server ini (Fitur Lengkap atau Khusus Musik)')
+        .addStringOption((opt) =>
+          opt
+            .setName('pilihan')
+            .setDescription('Mode yang ingin diaktifkan di server ini')
+            .setRequired(true)
+            .addChoices(
+              { name: '🌟 Fitur Lengkap (All-in-One)', value: 'all' },
+              { name: '🎵 Khusus Musik (Music Only)', value: 'music' },
+            ),
+        ),
+    )
+    .addSubcommand((sub) =>
       sub.setName('status').setDescription('Lihat konfigurasi setup server saat ini'),
     ),
 
@@ -513,12 +528,37 @@ module.exports = {
       });
     }
 
+    if (sub === 'mode') {
+      const mode = interaction.options.getString('pilihan');
+      updateGuildConfig(guild.id, { mode });
+
+      return interaction.reply({
+        embeds: [
+          mode === 'music'
+            ? successEmbed(
+                'Mode Khusus Musik Aktif 🎵',
+                'Di server ini bot sekarang **hanya melayani perintah Musik** (`/play`, `/skip`, `/pause`, `/resume`, `/queue`, `/shuffle`, `/autoplay`, `/stop`).\nWelcome, Leveling, AI Chat, dan fitur lain dinonaktifkan agar tidak bentrok dengan bot lain.',
+              )
+            : successEmbed(
+                'Mode Fitur Lengkap Aktif 🌟',
+                'Semua fitur bot (Musik, AI, Leveling, Ekonomi, Moderasi, Welcome, Ticket, Temp Voice) kembali aktif di server ini!',
+              ),
+        ],
+      });
+    }
+
     if (sub === 'status') {
       const cfg = getGuildConfig(guild.id);
+      const modeLabel = cfg.mode === 'music' ? '🎵 Khusus Musik (Music Only)' : '🌟 Fitur Lengkap (All-in-One)';
       const embed = createEmbed({
         title: `⚙️ Konfigurasi Server: ${guild.name}`,
         color: COLORS.INFO,
         fields: [
+          {
+            name: '🎛️ Mode Bot',
+            value: modeLabel,
+            inline: false,
+          },
           {
             name: '🎉 Welcome Channel',
             value: cfg.welcomeChannelId ? `<#${cfg.welcomeChannelId}>` : 'Belum diatur (pakai System Channel)',

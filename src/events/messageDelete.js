@@ -8,7 +8,7 @@ module.exports = {
     if (!message.guild || message.author?.bot) return;
 
     const config = getGuildConfig(message.guild.id);
-    if (!config.logChannelId) return;
+    if (config.mode === 'music' || !config.logChannelId) return;
 
     const logChannel = message.guild.channels.cache.get(config.logChannelId);
     if (!logChannel || !logChannel.isTextBased() || logChannel.id === message.channel.id) return;

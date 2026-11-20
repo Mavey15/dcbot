@@ -6,6 +6,7 @@ module.exports = {
   name: Events.GuildMemberRemove,
   async execute(member) {
     const config = getGuildConfig(member.guild.id);
+    if (config.mode === 'music') return;
     const channelId = config.welcomeChannelId || process.env.WELCOME_CHANNEL_ID;
     const channel = channelId
       ? member.guild.channels.cache.get(channelId)

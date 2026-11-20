@@ -10,6 +10,10 @@ module.exports = {
     if (message.author.bot || !message.guild) return;
 
     const guildId = message.guild.id;
+    const config = getGuildConfig(guildId);
+
+    // Jika server dalam mode Khusus Musik, matikan XP, AFK, & AI Chat otomatis
+    if (config.mode === 'music') return;
 
     // 1. Sistem AFK: hapus status AFK jika pengirim pesan sebelumnya AFK
     const ownAfk = clearAfk(guildId, message.author.id);
@@ -41,7 +45,6 @@ module.exports = {
     }
 
     // 3. Sistem Chatbot AI (di channel #ai-chat atau saat mention @Bot)
-    const config = getGuildConfig(guildId);
     const isAiChannel = config.aiChannelId && message.channel.id === config.aiChannelId;
     const isMentioned = message.mentions.has(message.client.user.id);
 

@@ -9,6 +9,7 @@ const {
   ButtonStyle,
 } = require('discord.js');
 const { createEmbed, successEmbed, errorEmbed, warnEmbed, COLORS } = require('../utils/embed');
+const { getGuildConfig } = require('../utils/guildConfig');
 
 async function handleButton(interaction) {
   const { customId, guild, member, user } = interaction;
@@ -140,6 +141,23 @@ module.exports = {
     if (!command) {
       console.error(`Command tidak ditemukan: ${interaction.commandName}`);
       return;
+    }
+
+    // Jika server memakai mode "Khusus Musik", batasi hanya perintah Musik + /setup + /help + /ping
+    if (interaction.guild) {
+      const cfg = getGuildConfig(interaction.guild.id);
+      const allowedInMusicMode = ['setup', 'help', 'ping'];
+      if (cfg.mode === 'music' && command.category !== 'Musik' && !allowedInMusicMode.includes(command.data.name)) {
+        return interaction.reply({
+          embeds: [
+            warnEmbed(
+              'Mode Khusus Musik Aktif 🎵',
+              'Server ini disetel ke mode **Khusus Musik**. Hanya perintah musik (`/play`, `/skip`, `/queue`, `/shuffle`, `/autoplay`, `/stop`, dll.) yang aktif.\n*(Admin dapat mengubahnya lewat `/setup mode`.)*',
+            ),
+          ],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
     }
 
     // Cooldown handler

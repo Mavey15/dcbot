@@ -6,6 +6,7 @@ module.exports = {
   name: Events.GuildMemberAdd,
   async execute(member) {
     const config = getGuildConfig(member.guild.id);
+    if (config.mode === 'music') return;
 
     // 1. Auto-Role jika dikonfigurasi lewat /setup
     if (config.autoRoleId) {
