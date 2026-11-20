@@ -105,6 +105,11 @@ module.exports = {
     )
     .addSubcommand((sub) =>
       sub
+        .setName('music')
+        .setDescription('Setup khusus musik saja (hanya buat kategori & channel musik + aktifkan mode Khusus Musik)'),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('mode')
         .setDescription('Pilih mode bot khusus untuk server ini (Fitur Lengkap atau Khusus Musik)')
         .addStringOption((opt) =>
@@ -526,6 +531,91 @@ module.exports = {
             : successEmbed('Auto-Role Dimatikan', 'Auto-role untuk member baru telah dinonaktifkan.'),
         ],
       });
+    }
+
+    if (sub === 'music') {
+      await interaction.deferReply();
+
+      try {
+        let musicCat = guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && c.name === '🎵 MUSIC LOUNGE',
+        );
+        if (!musicCat) {
+          musicCat = await guild.channels.create({
+            name: '🎵 MUSIC LOUNGE',
+            type: ChannelType.GuildCategory,
+          });
+        }
+
+        let reqCh = guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildText && c.name === '🎵・request-musik' && c.parentId === musicCat.id,
+        );
+        const reqCreated = !reqCh;
+        if (!reqCh) {
+          reqCh = await guild.channels.create({
+            name: '🎵・request-musik',
+            type: ChannelType.GuildText,
+            parent: musicCat.id,
+            topic: 'Ketik /play <judul lagu / link playlist YouTube> untuk memutar musik!',
+          });
+        }
+
+        let voiceCh = guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildVoice && c.name === '🎵 Ruang Musik' && c.parentId === musicCat.id,
+        );
+        if (!voiceCh) {
+          voiceCh = await guild.channels.create({
+            name: '🎵 Ruang Musik',
+            type: ChannelType.GuildVoice,
+            parent: musicCat.id,
+            bitrate: 96000,
+          });
+        }
+
+        if (reqCreated) {
+          const guideEmbed = createEmbed({
+            title: '🎵 Pusat Musik Server',
+            description: [
+              `Masuk ke ${voiceCh}, lalu gunakan perintah berikut di channel ini:`,
+              '',
+              '• `/play <judul / link playlist>` — Putar lagu atau Playlist YouTube',
+              '• `/skip` — Lewati ke lagu berikutnya',
+              '• `/pause` / `/resume` — Jeda atau lanjutkan musik',
+              '• `/queue` — Lihat daftar antrean lagu',
+              '• `/shuffle` — Acak urutan antrean playlist',
+              '• `/autoplay` — Nyalakan/matikan pemutaran lagu otomatis',
+              '• `/stop` — Hentikan musik & keluarkan bot',
+            ].join('\n'),
+            color: COLORS.PRIMARY,
+          });
+          await reqCh.send({ embeds: [guideEmbed] }).catch(() => {});
+        }
+
+        // Otomatis aktifkan mode Khusus Musik agar tidak bentrok dengan bot lain (misal Maki.gg)
+        updateGuildConfig(guild.id, { mode: 'music' });
+
+        await interaction.editReply({
+          embeds: [
+            createEmbed({
+              title: '🎵 Setup Khusus Musik Selesai!',
+              description:
+                'Hanya channel musik yang dibuat, dan server ini otomatis diatur ke mode **Khusus Musik** (tidak mengganggu bot lain seperti Maki.gg).',
+              color: COLORS.SUCCESS,
+              fields: [
+                { name: '💬 Channel Request', value: `${reqCh}`, inline: true },
+                { name: '🔊 Voice Musik (96kbps)', value: `${voiceCh}`, inline: true },
+                { name: '🎛️ Mode Server', value: '🎵 Khusus Musik (Music Only)', inline: false },
+              ],
+            }),
+          ],
+        });
+      } catch (error) {
+        console.error('Setup music error:', error);
+        await interaction.editReply({
+          embeds: [errorEmbed('Setup Musik Gagal', 'Pastikan bot memiliki izin `Manage Channels`.')],
+        });
+      }
+      return;
     }
 
     if (sub === 'mode') {
