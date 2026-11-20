@@ -183,10 +183,22 @@ async function playNext(guildId) {
       await entersState(state.connection, VoiceConnectionStatus.Ready, 15_000);
     }
 
-    const rawStream = await yt.download(nextSong.url, {
-      filter: { hasAudio: true, hasVideo: false },
-      quality: Quality.HIGHEST_AUDIO,
-    });
+    const downloadWithRetry = async (url, retries = 2) => {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          return await yt.download(url, {
+            filter: { hasAudio: true, hasVideo: false },
+            quality: Quality.HIGHEST_AUDIO,
+          });
+        } catch (err) {
+          if (attempt === retries) throw err;
+          console.warn(`Retry download (${attempt}/${retries}) untuk ${nextSong.title}: ${err.message}`);
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+    };
+
+    const rawStream = await downloadWithRetry(nextSong.url, 2);
 
     rawStream.on('error', (err) => {
       console.error('Stream error:', err.message);
