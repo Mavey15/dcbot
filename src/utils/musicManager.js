@@ -8,6 +8,7 @@ const {
   entersState,
   NoSubscriberBehavior,
 } = require('@discordjs/voice');
+const scdl = require('soundcloud-downloader').default;
 const { Ytdl, Quality, SearchType, parseVideoId } = require('@distube/ytdl-core');
 const ffmpegStatic = require('ffmpeg-static');
 const { createEmbed, COLORS } = require('./embed');
@@ -54,13 +55,57 @@ function isYouTubeUrl(input) {
   }
 }
 
-async function searchTrack(query, requestedBy) {
-  if (isYouTubeUrl(query)) {
-    const info = await yt.getInfo(query.trim());
-    const details = info.videoDetails;
+function isSoundCloudUrl(input) {
+  return /^https?:\/\/(www\.|m\.)?soundcloud\.com\//i.test(input.trim());
+}
 
+async function searchSoundCloud(query, requestedBy, excludeIds = new Set()) {
+  const res = await scdl.search({ query, resourceType: 'tracks', limit: 8 });
+  const list = res?.collection || [];
+  const track =
+    list.find((t) => t?.permalink_url && t.streamable !== false && !excludeIds.has(`sc:${t.id}`)) ||
+    list.find((t) => t?.permalink_url && !excludeIds.has(`sc:${t.id}`)) ||
+    list[0];
+
+  if (!track || !track.permalink_url) return null;
+
+  return {
+    id: `sc:${track.id}`,
+    source: 'soundcloud',
+    title: track.title,
+    url: track.permalink_url,
+    duration: formatDuration(Math.floor((track.duration || 0) / 1000)),
+    thumbnail: track.artwork_url ? track.artwork_url.replace('-large', '-t500x500') : null,
+    author: track.user?.username || 'SoundCloud',
+    requestedBy,
+  };
+}
+
+async function searchTrack(query, requestedBy) {
+  const trimmed = query.trim();
+
+  // 1. Jika link SoundCloud
+  if (isSoundCloudUrl(trimmed)) {
+    const info = await scdl.getInfo(trimmed);
     return {
-      id: details.videoId,
+      id: `sc:${info.id}`,
+      source: 'soundcloud',
+      title: info.title,
+      url: info.permalink_url || trimmed,
+      duration: formatDuration(Math.floor((info.duration || 0) / 1000)),
+      thumbnail: info.artwork_url ? info.artwork_url.replace('-large', '-t500x500') : null,
+      author: info.user?.username || 'SoundCloud',
+      requestedBy,
+    };
+  }
+
+  // 2. Jika link YouTube
+  if (isYouTubeUrl(trimmed)) {
+    const info = await yt.getInfo(trimmed);
+    const details = info.videoDetails;
+    return {
+      id: `yt:${details.videoId}`,
+      source: 'youtube',
       title: details.title,
       url: details.video_url || `https://www.youtube.com/watch?v=${details.videoId}`,
       duration: formatDuration(details.lengthSeconds),
@@ -70,13 +115,22 @@ async function searchTrack(query, requestedBy) {
     };
   }
 
-  // Pencarian otomatis berdasarkan judul lagu (tanpa perlu link)
-  const results = await yt.search(query, { type: SearchType.VIDEO });
+  // 3. Pencarian berdasarkan judul lagu: pakai SoundCloud dulu (sangat ringan CPU & RAM!)
+  try {
+    const scTrack = await searchSoundCloud(trimmed, requestedBy);
+    if (scTrack) return scTrack;
+  } catch (err) {
+    console.warn('SoundCloud search gagal, fallback ke YouTube:', err.message);
+  }
+
+  // 4. Fallback pencarian ke YouTube jika tidak ketemu di SoundCloud
+  const results = await yt.search(trimmed, { type: SearchType.VIDEO });
   const video = Array.isArray(results) ? results[0] : null;
   if (!video) return null;
 
   return {
-    id: video.id,
+    id: `yt:${video.id}`,
+    source: 'youtube',
     title: video.title,
     url: video.url || `https://www.youtube.com/watch?v=${video.id}`,
     duration: video.isLive ? 'Live' : formatDuration(video.lengthSeconds),
@@ -88,33 +142,41 @@ async function searchTrack(query, requestedBy) {
 
 async function findRelatedTrack(lastSong, playedIds) {
   try {
-    const related = await yt.getRelated(lastSong.url);
-    if (!Array.isArray(related) || related.length === 0) return null;
+    // Cari lagu mirip di SoundCloud (super ringan untuk CPU hosting)
+    const cleanTitle = lastSong.title
+      .replace(/\(.*?\)|\[.*?\]|official|music|video|lyric|lirik|audio/gi, '')
+      .trim();
+    const searchKey = lastSong.author && lastSong.author !== 'SoundCloud' && lastSong.author !== 'YouTube'
+      ? `${lastSong.author} ${cleanTitle.split(' ').slice(0, 2).join(' ')}`
+      : cleanTitle;
 
-    // Pilih lagu terkait yang belum pernah diputar & bukan live/terlalu panjang
-    const candidate =
-      related.find(
-        (v) =>
-          v.id &&
-          !playedIds.has(v.id) &&
-          !v.isLive &&
-          (!v.lengthSeconds || v.lengthSeconds <= 900),
-      ) || related.find((v) => v.id && !playedIds.has(v.id)) || related[0];
-
-    if (!candidate) return null;
-
-    return {
-      id: candidate.id,
-      title: candidate.title,
-      url: candidate.url || `https://www.youtube.com/watch?v=${candidate.id}`,
-      duration: candidate.isLive ? 'Live' : formatDuration(candidate.lengthSeconds),
-      thumbnail: candidate.thumbnails?.[0]?.url || null,
-      author: candidate.author?.name || 'YouTube',
-      requestedBy: '🔄 Autoplay',
-    };
+    const scRelated = await searchSoundCloud(searchKey || lastSong.title, '🔄 Autoplay', playedIds);
+    if (scRelated && !playedIds.has(scRelated.id)) {
+      return scRelated;
+    }
   } catch (err) {
-    console.error('Autoplay getRelated error:', err.message);
-    return null;
+    console.warn('Autoplay SoundCloud gagal:', err.message);
+  }
+
+  return null;
+}
+
+async function getAudioStream(song) {
+  if (song.source === 'soundcloud') {
+    return scdl.download(song.url);
+  }
+
+  // Jika sumber YouTube, coba download — jika CPU hosting timeout, fallback otomatis ke SoundCloud!
+  try {
+    return await yt.download(song.url, {
+      filter: { hasAudio: true, hasVideo: false },
+      quality: Quality.HIGHEST_AUDIO,
+    });
+  } catch (err) {
+    console.warn(`YouTube download gagal (${err.message}), fallback ke SoundCloud untuk: ${song.title}`);
+    const fallback = await searchSoundCloud(song.title, song.requestedBy);
+    if (!fallback) throw err;
+    return scdl.download(fallback.url);
   }
 }
 
@@ -178,28 +240,11 @@ async function playNext(guildId) {
   }
 
   try {
-    // Pastikan koneksi voice sudah Ready sebelum mulai kirim audio
     if (state.connection.state.status !== VoiceConnectionStatus.Ready) {
       await entersState(state.connection, VoiceConnectionStatus.Ready, 15_000);
     }
 
-    const downloadWithRetry = async (url, retries = 2) => {
-      for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-          return await yt.download(url, {
-            filter: { hasAudio: true, hasVideo: false },
-            quality: Quality.HIGHEST_AUDIO,
-          });
-        } catch (err) {
-          if (attempt === retries) throw err;
-          console.warn(`Retry download (${attempt}/${retries}) untuk ${nextSong.title}: ${err.message}`);
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      }
-    };
-
-    const rawStream = await downloadWithRetry(nextSong.url, 2);
-
+    const rawStream = await getAudioStream(nextSong);
     rawStream.on('error', (err) => {
       console.error('Stream error:', err.message);
     });
@@ -217,10 +262,12 @@ async function playNext(guildId) {
         thumbnail: nextSong.thumbnail,
         fields: [
           { name: '⏱️ Durasi', value: nextSong.duration, inline: true },
-          { name: '📺 Channel', value: nextSong.author, inline: true },
+          { name: '📺 Artis / Channel', value: nextSong.author, inline: true },
           { name: '👤 Diminta oleh', value: `${nextSong.requestedBy}`, inline: true },
         ],
-        footer: { text: `Autoplay: ${state.autoplay ? 'Aktif (ON)' : 'Nonaktif (OFF)'} • Gunakan /autoplay untuk mengubah` },
+        footer: {
+          text: `Autoplay: ${state.autoplay ? 'Aktif (ON)' : 'Nonaktif (OFF)'} • Gunakan /autoplay untuk mengubah`,
+        },
       });
       state.textChannel.send({ embeds: [embed] }).catch(() => {});
     }
