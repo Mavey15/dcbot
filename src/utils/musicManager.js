@@ -112,14 +112,33 @@ async function fetchYouTubePlaylist(url, requestedBy, maxTracks = 50) {
   };
 }
 
-async function searchSoundCloud(query, requestedBy, excludeIds = new Set()) {
-  const res = await scdl.search({ query, resourceType: 'tracks', limit: 8 });
-  const list = res?.collection || [];
-  const track =
-    list.find((t) => t?.permalink_url && t.streamable !== false && !excludeIds.has(`sc:${t.id}`)) ||
-    list.find((t) => t?.permalink_url && !excludeIds.has(`sc:${t.id}`)) ||
-    list[0];
+const UNWANTED_KEYWORDS = ['sped up', 'speed up', 'nightcore', 'slowed', 'reverb', '8d audio', 'chipmunk'];
 
+function hasUnwantedMod(title, query) {
+  const lowerTitle = (title || '').toLowerCase();
+  const lowerQuery = (query || '').toLowerCase();
+  return UNWANTED_KEYWORDS.some((kw) => lowerTitle.includes(kw) && !lowerQuery.includes(kw));
+}
+
+async function searchSoundCloud(query, requestedBy, excludeIds = new Set()) {
+  const res = await scdl.search({ query, resourceType: 'tracks', limit: 15 });
+  const list = (res?.collection || []).filter(
+    (t) => t && t.permalink_url && t.streamable !== false && !excludeIds.has(`sc:${t.id}`),
+  );
+
+  // 1. Prioritas utama: lagu penuh (bukan SNIP 30 detik), durasi wajar (45 dtk - 12 mnt), dan bukan versi sped up / nightcore
+  const ideal = list.find(
+    (t) =>
+      t.policy !== 'SNIP' &&
+      (t.duration || 0) >= 45_000 &&
+      (t.duration || 0) <= 720_000 &&
+      !hasUnwantedMod(t.title, query),
+  );
+
+  // 2. Fallback: lagu penuh (bukan SNIP 30 detik) meski durasi lebih panjang
+  const fullTrack = list.find((t) => t.policy !== 'SNIP' && (t.duration || 0) >= 45_000);
+
+  const track = ideal || fullTrack || list[0];
   if (!track || !track.permalink_url) return null;
 
   return {
