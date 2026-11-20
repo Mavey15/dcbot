@@ -9,7 +9,7 @@ const {
   NoSubscriberBehavior,
 } = require('@discordjs/voice');
 const scdl = require('soundcloud-downloader').default;
-const { Ytdl, Quality, SearchType, parseVideoId } = require('@distube/ytdl-core');
+const { Ytdl, Quality, SearchType, parseVideoId, parsePlaylistId } = require('@distube/ytdl-core');
 const fs = require('node:fs');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { createEmbed, COLORS } = require('./embed');
@@ -64,8 +64,52 @@ function isYouTubeUrl(input) {
   }
 }
 
+function isYouTubePlaylistUrl(input) {
+  if (!/^https?:\/\//i.test(input.trim())) return false;
+  try {
+    return Boolean(parsePlaylistId(input.trim()));
+  } catch {
+    return false;
+  }
+}
+
 function isSoundCloudUrl(input) {
   return /^https?:\/\/(www\.|m\.)?soundcloud\.com\//i.test(input.trim());
+}
+
+function cleanSongQuery(title, author) {
+  const cleanTitle = (title || '')
+    .replace(/\(.*?\)|\[.*?\]|official|music|video|lyric|lirik|audio|mv|hd|4k/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (author && author !== 'YouTube' && author !== 'SoundCloud' && !cleanTitle.toLowerCase().includes(author.toLowerCase())) {
+    return `${author} ${cleanTitle}`.trim();
+  }
+  return cleanTitle || title;
+}
+
+async function fetchYouTubePlaylist(url, requestedBy, maxTracks = 50) {
+  const playlist = await yt.getPlaylist(url.trim());
+  const videos = (playlist?.videos || []).filter((v) => v && v.id && !v.isLive).slice(0, maxTracks);
+  if (videos.length === 0) return null;
+
+  const tracks = videos.map((v) => ({
+    id: `yt:${v.id}`,
+    source: 'playlist-track',
+    title: v.title,
+    url: v.url || `https://www.youtube.com/watch?v=${v.id}`,
+    duration: formatDuration(v.lengthSeconds),
+    thumbnail: v.thumbnails?.[0]?.url || null,
+    author: v.author?.name || 'YouTube',
+    requestedBy,
+  }));
+
+  return {
+    title: playlist.title || 'YouTube Playlist',
+    url: playlist.url || url.trim(),
+    thumbnail: playlist.thumbnails?.[0]?.url || tracks[0].thumbnail,
+    tracks,
+  };
 }
 
 async function searchSoundCloud(query, requestedBy, excludeIds = new Set()) {
@@ -175,6 +219,18 @@ async function getAudioStream(song) {
     return scdl.download(song.url);
   }
 
+  // Untuk lagu dari playlist YouTube: cari & stream via SoundCloud dulu (sangat ringan CPU di hosting)
+  if (song.source === 'playlist-track') {
+    try {
+      const scMatch = await searchSoundCloud(cleanSongQuery(song.title, song.author), song.requestedBy);
+      if (scMatch) {
+        return await scdl.download(scMatch.url);
+      }
+    } catch (err) {
+      console.warn(`SoundCloud resolve gagal untuk "${song.title}", coba YouTube:`, err.message);
+    }
+  }
+
   // Jika sumber YouTube, coba download — jika CPU hosting timeout, fallback otomatis ke SoundCloud!
   try {
     return await yt.download(song.url, {
@@ -183,7 +239,7 @@ async function getAudioStream(song) {
     });
   } catch (err) {
     console.warn(`YouTube download gagal (${err.message}), fallback ke SoundCloud untuk: ${song.title}`);
-    const fallback = await searchSoundCloud(song.title, song.requestedBy);
+    const fallback = await searchSoundCloud(cleanSongQuery(song.title, song.author), song.requestedBy);
     if (!fallback) throw err;
     return scdl.download(fallback.url);
   }
@@ -293,12 +349,21 @@ async function playNext(guildId) {
 }
 
 async function enqueue(interaction, voiceChannel, query) {
-  const track = await searchTrack(query, interaction.user);
-  if (!track) {
-    throw new Error('NOT_FOUND');
+  const guildId = interaction.guild.id;
+
+  let playlistInfo = null;
+  let tracksToAdd = [];
+
+  if (isYouTubePlaylistUrl(query)) {
+    playlistInfo = await fetchYouTubePlaylist(query, interaction.user, 50);
+    if (!playlistInfo) throw new Error('NOT_FOUND');
+    tracksToAdd = playlistInfo.tracks;
+  } else {
+    const track = await searchTrack(query, interaction.user);
+    if (!track) throw new Error('NOT_FOUND');
+    tracksToAdd = [track];
   }
 
-  const guildId = interaction.guild.id;
   let state = queues.get(guildId);
 
   if (!state) {
@@ -354,14 +419,35 @@ async function enqueue(interaction, voiceChannel, query) {
   }
 
   state.textChannel = interaction.channel;
-  state.songs.push(track);
+  state.songs.push(...tracksToAdd);
 
   const startedImmediately = !state.current && state.player.state.status === AudioPlayerStatus.Idle;
   if (startedImmediately) {
     await playNext(guildId);
   }
 
-  return { track, position: startedImmediately ? 0 : state.songs.length };
+  if (playlistInfo) {
+    return {
+      isPlaylist: true,
+      playlistTitle: playlistInfo.title,
+      playlistUrl: playlistInfo.url,
+      thumbnail: playlistInfo.thumbnail,
+      addedCount: tracksToAdd.length,
+      firstTrack: tracksToAdd[0],
+    };
+  }
+
+  return { isPlaylist: false, track: tracksToAdd[0], position: startedImmediately ? 0 : state.songs.length };
+}
+
+function shuffle(guildId) {
+  const state = queues.get(guildId);
+  if (!state || state.songs.length < 2) return false;
+  for (let i = state.songs.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [state.songs[i], state.songs[j]] = [state.songs[j], state.songs[i]];
+  }
+  return true;
 }
 
 function skip(guildId) {
@@ -396,6 +482,7 @@ module.exports = {
   pause,
   resume,
   stop,
+  shuffle,
   getGuildQueue,
   setAutoplay,
   isAutoplayEnabled,

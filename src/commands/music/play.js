@@ -7,9 +7,9 @@ module.exports = {
   cooldown: 3,
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Putar lagu dari YouTube (judul atau link)')
+    .setDescription('Putar lagu atau playlist (judul lagu, link YouTube/Playlist, atau SoundCloud)')
     .addStringOption((opt) =>
-      opt.setName('lagu').setDescription('Judul lagu atau URL YouTube').setRequired(true),
+      opt.setName('lagu').setDescription('Judul lagu, link lagu, atau link Playlist YouTube').setRequired(true),
     ),
   async execute(interaction) {
     const voiceChannel = interaction.member?.voice?.channel;
@@ -24,8 +24,27 @@ module.exports = {
     await interaction.deferReply();
 
     try {
-      const { track, position } = await music.enqueue(interaction, voiceChannel, query);
+      const result = await music.enqueue(interaction, voiceChannel, query);
 
+      if (result.isPlaylist) {
+        await interaction.editReply({
+          embeds: [
+            createEmbed({
+              title: '📜 Playlist YouTube Ditambahkan!',
+              description: `**[${result.playlistTitle}](${result.playlistUrl})**\nBerhasil memasukkan **${result.addedCount} lagu** ke antrean!`,
+              color: COLORS.SUCCESS,
+              thumbnail: result.thumbnail,
+              fields: [
+                { name: '▶️ Lagu Pertama', value: result.firstTrack.title, inline: false },
+                { name: '💡 Tips', value: 'Gunakan `/shuffle` untuk mengacak antrean atau `/queue` untuk melihat daftarnya.', inline: false },
+              ],
+            }),
+          ],
+        });
+        return;
+      }
+
+      const { track, position } = result;
       if (position === 0) {
         await interaction.editReply({
           embeds: [
@@ -56,8 +75,8 @@ module.exports = {
       console.error('Error /play:', error);
       const msg =
         error.message === 'NOT_FOUND'
-          ? 'Lagu tidak ditemukan di YouTube. Coba kata kunci lain.'
-          : 'Gagal memutar lagu. Pastikan link valid dan bot punya izin masuk ke voice channel.';
+          ? 'Lagu atau playlist tidak ditemukan. Pastikan playlist bersifat **Public** atau **Unlisted** (bukan Private).'
+          : 'Gagal memutar musik. Pastikan link valid dan bot punya izin masuk ke voice channel.';
 
       await interaction.editReply({ embeds: [errorEmbed('Gagal Memutar Musik', msg)] });
     }
