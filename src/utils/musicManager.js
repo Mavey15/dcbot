@@ -255,6 +255,7 @@ async function playNext(guildId) {
 
     const rawStream = await getAudioStream(nextSong);
     rawStream.on('error', (err) => {
+      if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
       console.error('Stream error:', err.message);
     });
 
