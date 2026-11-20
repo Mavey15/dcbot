@@ -6,9 +6,10 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ComponentType,
 } = require('discord.js');
-const { createEmbed, successEmbed, errorEmbed, COLORS } = require('../../utils/embed');
-const { getGuildConfig, updateGuildConfig } = require('../../utils/guildConfig');
+const { createEmbed, successEmbed, errorEmbed, warnEmbed, COLORS } = require('../../utils/embed');
+const { getGuildConfig, updateGuildConfig, resetGuildConfig } = require('../../utils/guildConfig');
 
 const THEMES = {
   community: {
@@ -121,6 +122,16 @@ module.exports = {
               { name: '🌟 Fitur Lengkap (All-in-One)', value: 'all' },
               { name: '🎵 Khusus Musik (Music Only)', value: 'music' },
             ),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('reset')
+        .setDescription('Reset konfigurasi setup bot di server ini (opsional: hapus channel buatan setup)')
+        .addBooleanOption((opt) =>
+          opt
+            .setName('hapus_channel')
+            .setDescription('Hapus juga kategori & channel yang dibuat oleh /setup auto atau /setup music? (Default: False)'),
         ),
     )
     .addSubcommand((sub) =>
@@ -635,6 +646,117 @@ module.exports = {
               ),
         ],
       });
+    }
+
+    if (sub === 'reset') {
+      const deleteChannels = interaction.options.getBoolean('hapus_channel') || false;
+
+      if (!deleteChannels) {
+        resetGuildConfig(guild.id);
+        return interaction.reply({
+          embeds: [
+            successEmbed(
+              'Konfigurasi Setup Direset',
+              'Semua pengaturan bot di server ini (Welcome, AI Chat, Bot Logs, Auto-Role, Temp Voice, dan Mode) sudah dikembalikan ke awal.\n*Channel dan role di server tetap aman tidak dihapus.*',
+            ),
+          ],
+        });
+      }
+
+      // Jika hapus_channel = true, minta konfirmasi tombol dulu agar aman
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('confirm_setup_reset')
+          .setLabel('Ya, Hapus & Reset')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('cancel_setup_reset')
+          .setLabel('Batal')
+          .setStyle(ButtonStyle.Secondary),
+      );
+
+      const response = await interaction.reply({
+        embeds: [
+          warnEmbed(
+            'Konfirmasi Reset Setup',
+            'Kamu memilih **`hapus_channel: True`**.\nBot akan menghapus kategori & channel buatan `/setup auto` / `/setup music` (`📌 INFORMASI`, `💬 KOMUNITAS`, `🔊 VOICE LOUNGE`, `🎫 SUPPORT`, `🔒 STAFF AREA`, `🎵 MUSIC LOUNGE`, `🤖 BOT CENTER`) dan mereset konfigurasi bot.\n\n**Lanjutkan dalam 20 detik?**',
+          ),
+        ],
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+        withResponse: true,
+      });
+
+      const msg = response.resource.message;
+      try {
+        const btn = await msg.awaitMessageComponent({
+          componentType: ComponentType.Button,
+          filter: (i) => i.user.id === interaction.user.id,
+          time: 20_000,
+        });
+
+        if (btn.customId === 'cancel_setup_reset') {
+          return btn.update({
+            embeds: [successEmbed('Dibatalkan', 'Reset setup dibatalkan. Tidak ada channel yang dihapus.')],
+            components: [],
+          });
+        }
+
+        await btn.update({
+          embeds: [warnEmbed('Menghapus Channel Setup...', 'Sedang membersihkan channel buatan setup dan mereset konfigurasi...')],
+          components: [],
+        });
+
+        const setupCategoryNames = [
+          '📌 INFORMASI',
+          '💬 KOMUNITAS',
+          '🔊 VOICE LOUNGE',
+          '🎫 SUPPORT',
+          '🔒 STAFF AREA',
+          '🎵 MUSIC LOUNGE',
+          '🤖 BOT CENTER',
+        ];
+
+        let deletedCount = 0;
+        for (const catName of setupCategoryNames) {
+          const cat = guild.channels.cache.find(
+            (c) => c.type === ChannelType.GuildCategory && c.name === catName,
+          );
+          if (!cat) continue;
+
+          const children = guild.channels.cache.filter((c) => c.parentId === cat.id);
+          for (const [, ch] of children) {
+            if (ch.id === interaction.channelId) continue; // Jangan hapus channel tempat command dijalankan dulu
+            await ch.delete('Reset setup oleh admin').then(() => { deletedCount++; }).catch(() => {});
+          }
+          if (cat.id !== interaction.channel?.parentId) {
+            await cat.delete('Reset setup oleh admin').then(() => { deletedCount++; }).catch(() => {});
+          }
+        }
+
+        resetGuildConfig(guild.id);
+
+        await interaction
+          .editReply({
+            embeds: [
+              successEmbed(
+                'Reset Setup Selesai!',
+                `Konfigurasi bot telah direset dan **${deletedCount} channel/kategori** buatan setup berhasil dihapus.\n*(Jika kamu menjalankan perintah ini dari dalam channel buatan setup, hapus channel ini manual jika diperlukan.)*`,
+              ),
+            ],
+            components: [],
+          })
+          .catch(() => {});
+      } catch {
+        await interaction
+          .editReply({
+            embeds: [warnEmbed('Waktu Habis', 'Konfirmasi reset setup dibatalkan karena melewati 20 detik.')],
+            components: [],
+          })
+          .catch(() => {});
+      }
+      return;
     }
 
     if (sub === 'status') {

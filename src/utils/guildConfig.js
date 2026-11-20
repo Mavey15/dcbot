@@ -42,7 +42,18 @@ function updateGuildConfig(guildId, patch) {
   return data[guildId];
 }
 
+function resetGuildConfig(guildId) {
+  const data = readAll();
+  if (data[guildId]) {
+    delete data[guildId];
+    writeAll(data);
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   getGuildConfig,
   updateGuildConfig,
+  resetGuildConfig,
 };
