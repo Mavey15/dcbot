@@ -10,11 +10,11 @@ const {
 } = require('@discordjs/voice');
 const scdl = require('soundcloud-downloader').default;
 const { Ytdl, Quality, SearchType, parseVideoId } = require('@distube/ytdl-core');
-const ffmpegStatic = require('ffmpeg-static');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { createEmbed, COLORS } = require('./embed');
 
-if (ffmpegStatic && !process.env.FFMPEG_PATH) {
-  process.env.FFMPEG_PATH = ffmpegStatic;
+if (ffmpegInstaller?.path && !process.env.FFMPEG_PATH) {
+  process.env.FFMPEG_PATH = ffmpegInstaller.path;
 }
 
 const yt = new Ytdl();
