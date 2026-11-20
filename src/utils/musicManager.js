@@ -10,11 +10,20 @@ const {
 } = require('@discordjs/voice');
 const scdl = require('soundcloud-downloader').default;
 const { Ytdl, Quality, SearchType, parseVideoId } = require('@distube/ytdl-core');
+const fs = require('node:fs');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const { createEmbed, COLORS } = require('./embed');
 
-if (ffmpegInstaller?.path && !process.env.FFMPEG_PATH) {
-  process.env.FFMPEG_PATH = ffmpegInstaller.path;
+if (ffmpegInstaller?.path) {
+  if (!process.env.FFMPEG_PATH) {
+    process.env.FFMPEG_PATH = ffmpegInstaller.path;
+  }
+  // Pastikan binary ffmpeg punya izin execute di Linux (jika postinstall chmod diblokir hosting)
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(ffmpegInstaller.path, 0o755);
+    } catch {}
+  }
 }
 
 const yt = new Ytdl();
